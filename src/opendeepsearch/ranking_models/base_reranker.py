@@ -87,6 +87,10 @@ class BaseSemanticSearcher(ABC):
         queries = [query] if isinstance(query, str) else query
         scores = self.calculate_scores(queries, documents, normalize=normalize)
         
+        if False:
+            print(f"Queries: {queries}")
+            print(f"Documents: {documents}")
+            print(f"Scores shape: {scores.shape}")
         results = []
         for query_scores in scores:
             top_indices = torch.topk(query_scores, min(top_k, len(documents)), dim=0)

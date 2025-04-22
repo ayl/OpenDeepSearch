@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Dict, Any, Optional, List, TypeVar, Generic, Union
 from abc import ABC, abstractmethod
 
-import requests
+import requests, json
 
 T = TypeVar('T')
 
@@ -156,6 +156,128 @@ class SerperAPI(SearchAPI):
         except Exception as e:
             return SearchResult(error=f"Unexpected error: {str(e)}")
 
+class Pubmed(SearchAPI):
+    """API client for Pubmed search engine"""
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = api_key or os.getenv("PUBMED_API_KEY")
+        if not self.api_key:
+            self.api_key = ""
+
+    def get_sources(
+        self,
+        query: str,
+        num_results: int = 8,
+        stored_location: Optional[str] = None
+    ) -> SearchResult[Dict[str, Any]]:
+        """
+        Fetch search results from Pubmed API.
+
+        Args:
+            query: Search query string
+            num_results: Number of results to return (default: 8)
+            stored_location: Optional location string
+
+        Returns:
+            SearchResult containing the search results or error information
+        """
+        from Bio import Entrez
+        results = {
+            'organic': [],
+            'images': [],
+            'topStories': [],  # SearXNG might not have direct equivalent
+            'graph': None,     # SearXNG doesn't provide knowledge graph
+            'answerBox': None, # SearXNG doesn't provide answer box
+            'peopleAlsoAsk': None,
+            'relatedSearches': []
+        }
+
+
+        # Always provide your email address to NCBI
+        Entrez.email = "agent@example.com"
+        # If you have an API key, you can add: Entrez.api_key = "YOUR_API_KEY"
+        if self.api_key != "":
+            Entrez.api_key = self.api_key
+
+        # Step 1: Use esearch to get a list of PMIDs for your query
+        search_handle = Entrez.esearch(db="pubmed", term=query, retmax=25, sort='relevance')
+        search_results = Entrez.read(search_handle)
+        search_handle.close()
+        pmid_list = search_results["IdList"]
+        # check if no results:
+        if not pmid_list:
+            return SearchResult(data=results)
+
+        # Step 2: Use efetch to get article details for each PMID
+        fetch_handle = Entrez.efetch(db="pubmed", id=pmid_list, rettype="xml")
+        records = Entrez.read(fetch_handle)
+        fetch_handle.close()
+        organic_results = []
+
+        for article in records["PubmedArticle"]:
+            # Extract PMID
+            pmid = article["MedlineCitation"]["PMID"]
+            # Extract title
+            title = article["MedlineCitation"]["Article"]["ArticleTitle"]
+            # Extract abstract (if available)
+            if "Abstract" in article["MedlineCitation"]["Article"]:
+                abstract_parts = article["MedlineCitation"]["Article"]["Abstract"]["AbstractText"]
+                # Join multiple parts if the abstract is split up
+                if isinstance(abstract_parts, list):
+                    abstract = " ".join(abstract_parts)
+                else:
+                    abstract = abstract_parts
+            else:
+                abstract = "No abstract available."
+            # Extract publication date
+            journal_info = article["MedlineCitation"]["Article"]["Journal"]["JournalIssue"]
+            pub_date = journal_info.get("PubDate", "No publication date available")
+
+            # Handle different formats of PubDate
+            if isinstance(pub_date, dict):
+              year = pub_date.get("Year", "")
+              month = pub_date.get("Month", "")
+              day = pub_date.get("Day", "")
+              # Combine parts if available
+              publication_date = " ".join(part for part in [year, month, day] if part)
+            else:
+              publication_date = pub_date  # Might be a string
+
+            # Try to get the DOI from the article IDs and construct a full text URL
+            doi_url = None
+            pmc_url = None
+            pubmed_url = None
+            article_ids = article.get("PubmedData", {}).get("ArticleIdList", [])
+            for article_id in article_ids:
+                # Check if the id type is doi
+                if article_id.attributes.get("IdType") == "doi":
+                    doi_url = "https://doi.org/" + str(article_id)
+                if article_id.attributes.get("IdType") == "pmc":
+                    pmc_url = f"https://pmc.ncbi.nlm.nih.gov/articles/{article_id}/"
+                if article_id.attributes.get("IdType") == "pubmed":
+                    pubmed_url = f"https://pubmed.ncbi.nlm.nih.gov/{article_id}/"
+
+            final_url = pubmed_url
+            if pmc_url is not None:
+                final_url = pmc_url
+            organic_results.append({
+                'title': title,
+                'link': final_url,
+                # grab the last 100 characters of the abstract
+                'snippet': abstract[-100:],
+                'date':publication_date,
+            })
+            if len(organic_results) >= num_results:
+                break
+
+        # Format results to match SerperAPI structure
+        results['organic'] =  organic_results
+        if False:
+            print(json.dumps(results, indent=2))
+
+        return SearchResult(data=results)
+
+
+
 
 class SearXNGAPI(SearchAPI):
     """API client for SearXNG search engine"""
@@ -263,6 +385,7 @@ class SearXNGAPI(SearchAPI):
 
 def create_search_api(
     search_provider: str = "serper",
+    pubmed_api_key: Optional[str] = None,
     serper_api_key: Optional[str] = None,
     searxng_instance_url: Optional[str] = None,
     searxng_api_key: Optional[str] = None
@@ -286,5 +409,17 @@ def create_search_api(
         return SerperAPI(api_key=serper_api_key)
     elif search_provider.lower() == "searxng":
         return SearXNGAPI(instance_url=searxng_instance_url, api_key=searxng_api_key)
+    elif search_provider.lower() == "pubmed":
+        return Pubmed(api_key=pubmed_api_key)
     else:
         raise ValueError(f"Invalid search provider: {search_provider}. Must be 'serper' or 'searxng'")
+
+
+if __name__ == "__main__":
+    # Example usage
+    search_api = create_search_api(search_provider="pubmed")
+    result = search_api.get_sources("AMD CFH")
+    if result.success:
+        print("Search results:", result.__dict__)
+    else:
+        print("Error:", result.error)

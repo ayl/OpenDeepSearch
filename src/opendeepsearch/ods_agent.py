@@ -146,15 +146,24 @@ class OpenDeepSearchAgent:
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"}
         ]
-        # Get completion from LLM
-        response = completion(
-            model=self.model,
-            messages=messages,
-            temperature=self.temperature,
-            top_p=self.top_p
-        )
 
-        return response.choices[0].message.content
+        if type(self.model) is str:
+            # Get completion from LLM
+            response = completion(
+                model=self.model,
+                messages=messages,
+                temperature=self.temperature,
+                top_p=self.top_p
+            )
+            return response.choices[0].message.content
+        else:
+            # Use the model directly if it's not a string
+            if False:
+                print(messages)
+            response = self.model(messages)
+            #print(response["raw"])
+            return response.content
+
 
     def ask_sync(
         self,

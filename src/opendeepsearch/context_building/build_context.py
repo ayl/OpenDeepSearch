@@ -59,6 +59,10 @@ def build_context(
         A formatted string containing all relevant search results
     """
     try:
+        if (type(sources_result) is not dict):
+            return ""
+        if False:
+            print(sources_result)
         # Build context from different components
         organic_results = extract_information(sources_result.get('organic', []))
         top_stories = extract_top_stories(sources_result.get('topStories'))
